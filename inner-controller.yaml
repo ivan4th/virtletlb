@@ -1,0 +1,42 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: virtletlb-inner
+  labels:
+    control-plane: virtletlb-inner
+spec:
+  selector:
+    control-plane: virtletlb-inner
+  ports:
+  - port: 443
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: virtletlb-inner
+spec:
+  selector:
+    matchLabels:
+      control-plane: virtletlb-inner
+  serviceName: virtletlb-inner
+  template:
+    metadata:
+      name: virtletlb-inner
+      labels:
+        control-plane: virtletlb-inner
+    spec:
+      containers:
+      - name: virtletlb
+        args: ["-v=2", "-logtostderr", "inner", "inner", "outer"]
+        image: docker.io/ishvedunov/virtletlb
+        env:
+        - name: KUBECONFIG
+          value: /etc/virtletlb/clusters.conf
+        volumeMounts:
+        - mountPath: /etc/virtletlb
+          name: cluster-configs
+      volumes:
+      - name: cluster-configs
+        secret:
+          secretName: cluster-configs

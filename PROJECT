@@ -1,0 +1,3 @@
+version: "1"
+domain: virtlet.cloud
+repo: github.com/ivan4th/virtletlb

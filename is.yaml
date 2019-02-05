@@ -1,0 +1,13 @@
+apiVersion: virtletlb.virtlet.cloud/v1alpha1
+kind: InnerService
+metadata:
+  name: default-nginx
+  namespace: default
+spec:
+  nodeNames:
+  - k8s-2
+  ports:
+  - port: 80
+    protocol: TCP
+status:
+  LoadBalancerIP: "1.1.1.5"
