@@ -28,11 +28,16 @@ import (
 	// "k8s.io/apimachinery/pkg/runtime"
 	kscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
+	"k8s.io/client-go/rest"
 	"k8s.io/sample-controller/pkg/signals"
 
 	"github.com/ivan4th/virtletlb/pkg/apis/virtletlb/v1alpha1"
 	inner "github.com/ivan4th/virtletlb/pkg/controller/inner"
 	outer "github.com/ivan4th/virtletlb/pkg/controller/outer"
+)
+
+const (
+	incluster = "INCLUSTER"
 )
 
 // var (
@@ -77,12 +82,18 @@ func main() {
 	switch command {
 	case "inner":
 		if flag.NArg() != 3 {
-			log.Fatalf("Usage: manager inner inner-ctx outer-ctx")
+			log.Fatalf("Usage: manager inner inner-ctx|INCLUSTER outer-ctx")
 		}
 
 		srcCtx, dstCtx := flag.Arg(1), flag.Arg(2)
 
-		innerCfg, _, err := config.NamedConfigAndNamespace(srcCtx)
+		var err error
+		var innerCfg *rest.Config
+		if srcCtx == incluster {
+			innerCfg, err = rest.InClusterConfig()
+		} else {
+			innerCfg, _, err = config.NamedConfigAndNamespace(srcCtx)
+		}
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -102,12 +113,20 @@ func main() {
 		m.AddController(co)
 	case "outer":
 		if flag.NArg() != 2 {
-			log.Fatalf("Usage: manager outer outer-ctx")
+			log.Fatalf("Usage: manager outer outer-ctx|INCLUSTER")
 		}
 
 		srcCtx := flag.Arg(1)
 
-		cfg, outerNs, err := config.NamedConfigAndNamespace(srcCtx)
+		var err error
+		var cfg *rest.Config
+		outerNs := "default"
+		if srcCtx == incluster {
+			cfg, err = rest.InClusterConfig()
+		} else {
+			cfg, outerNs, err = config.NamedConfigAndNamespace(srcCtx)
+		}
+
 		if err != nil {
 			log.Fatal(err)
 		}

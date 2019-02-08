@@ -20,34 +20,27 @@ spec:
     matchLabels:
       control-plane: virtletlb-outer
   serviceName: virtletlb-outer
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
   template:
     metadata:
       name: virtletlb-outer
       labels:
         control-plane: virtletlb-outer
     spec:
-      # serviceAccountName: virtlet
+      serviceAccountName: virtletlb
       containers:
       - name: virtletlb
-        args: ["-v=2", "-logtostderr", "outer", "outer"]
+        args: ["-v=2", "-logtostderr", "outer", "INCLUSTER"]
         image: docker.io/ishvedunov/virtletlb
-        env:
-        - name: KUBECONFIG
-          value: /etc/virtletlb/clusters.conf
-        volumeMounts:
-        - mountPath: /etc/virtletlb
-          name: cluster-configs
-      volumes:
-      # FIXME: use service acoount!!!
-      - name: cluster-configs
-        secret:
-          secretName: cluster-configs
-# ---
-# apiVersion: v1
-# kind: ServiceAccount
-# metadata:
-#   name: virtletlb
-#   namespace: kube-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: virtletlb
+  namespace: default
 # ---
 # apiVersion: rbac.authorization.k8s.io/v1beta1
 # kind: ClusterRoleBinding
