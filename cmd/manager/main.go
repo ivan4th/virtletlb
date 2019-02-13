@@ -18,27 +18,73 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"io/ioutil"
 	"k8s.io/klog"
-	"log"
+	"net"
+	"os"
+	"path/filepath"
 
 	"admiralty.io/multicluster-controller/pkg/cluster"
 	"admiralty.io/multicluster-controller/pkg/manager"
 	"admiralty.io/multicluster-service-account/pkg/config"
 	// extapi "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
 	// "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/api/core/v1"
 	kscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	"k8s.io/client-go/rest"
+	certutil "k8s.io/client-go/util/cert"
 	"k8s.io/sample-controller/pkg/signals"
 
 	"github.com/ivan4th/virtletlb/pkg/apis/virtletlb/v1alpha1"
 	inner "github.com/ivan4th/virtletlb/pkg/controller/inner"
 	outer "github.com/ivan4th/virtletlb/pkg/controller/outer"
+	pubconfig "github.com/ivan4th/virtletlb/pkg/pubconfig"
 )
 
 const (
-	incluster = "INCLUSTER"
+	incluster               = "INCLUSTER"
+	outcluster              = "OUTCLUSTER"
+	outerServiceAccountPath = "/outer-serviceaccount"
+	configSecretName        = "config"
 )
+
+// OuterClusterConfigInsideVM returns rest.Config and the namespace
+// for the outer cluster that's based upon the service account info
+// available inside Virtlet VMs. Based on OuterClusterConfig from
+// client-go.
+func OuterClusterConfigInsideVM() (*rest.Config, string, error) {
+	// TODO: extract these from /etc/cloud/environment
+	host, port := os.Getenv("OUTER_KUBERNETES_SERVICE_HOST"), os.Getenv("OUTER_KUBERNETES_SERVICE_PORT")
+	if len(host) == 0 || len(port) == 0 {
+		return nil, "", fmt.Errorf("unable to load the configuration of outer cluster, OUTER_KUBERNETES_SERVICE_HOST and OUTER_KUBERNETES_SERVICE_PORT must be defined")
+	}
+
+	token, err := ioutil.ReadFile(filepath.Join(outerServiceAccountPath, v1.ServiceAccountTokenKey))
+	if err != nil {
+		return nil, "", err
+	}
+	tlsClientConfig := rest.TLSClientConfig{}
+	rootCAFile := filepath.Join(outerServiceAccountPath, v1.ServiceAccountRootCAKey)
+	if _, err := certutil.NewPool(rootCAFile); err != nil {
+		klog.Errorf("Expected to load root CA config from %s, but got err: %v", rootCAFile, err)
+	} else {
+		tlsClientConfig.CAFile = rootCAFile
+	}
+
+	ns, err := ioutil.ReadFile(filepath.Join(outerServiceAccountPath, v1.ServiceAccountNamespaceKey))
+	if err != nil {
+		return nil, "", err
+	}
+
+	return &rest.Config{
+		// TODO: switch to using cluster DNS.
+		Host:            "https://" + net.JoinHostPort(host, port),
+		BearerToken:     string(token),
+		TLSClientConfig: tlsClientConfig,
+	}, string(ns), nil
+}
 
 // var (
 // 	scheme = runtime.NewScheme()
@@ -50,6 +96,26 @@ const (
 // 	extapi.AddToScheme(scheme)
 // 	v1alpha1.AddToScheme(scheme)
 // }
+
+func getInClusterConfigOrContext(spec string) (*rest.Config, string, error) {
+	var err error
+	var innerCfg *rest.Config
+	namespace := "default"
+	if spec == incluster {
+		innerCfg, err = rest.InClusterConfig()
+	} else {
+		innerCfg, namespace, err = config.NamedConfigAndNamespace(spec)
+	}
+	return innerCfg, namespace, err
+}
+
+func getOuterConfig(spec string) (*rest.Config, string, error) {
+	if spec == outcluster {
+		return OuterClusterConfigInsideVM()
+	} else {
+		return config.NamedConfigAndNamespace(spec)
+	}
+}
 
 func main() {
 	// https://github.com/kubernetes-sigs/kubebuilder/issues/491#issuecomment-459474907
@@ -73,7 +139,7 @@ func main() {
 	})
 
 	if flag.NArg() < 1 {
-		log.Fatalf("Usage: manager command args...")
+		klog.Fatalf("Usage: manager command args...")
 	}
 
 	// TODO: use cobra
@@ -82,70 +148,65 @@ func main() {
 	switch command {
 	case "inner":
 		if flag.NArg() != 3 {
-			log.Fatalf("Usage: manager inner inner-ctx|INCLUSTER outer-ctx")
+			klog.Fatalf("Usage: manager inner inner-ctx|INCLUSTER outer-ctx|OUTCLUSTER")
 		}
 
 		srcCtx, dstCtx := flag.Arg(1), flag.Arg(2)
 
-		var err error
-		var innerCfg *rest.Config
-		if srcCtx == incluster {
-			innerCfg, err = rest.InClusterConfig()
-		} else {
-			innerCfg, _, err = config.NamedConfigAndNamespace(srcCtx)
-		}
+		innerCfg, _, err := getInClusterConfigOrContext(srcCtx)
 		if err != nil {
-			log.Fatal(err)
+			klog.Fatal(err)
 		}
 		innerCluster := cluster.New(srcCtx, innerCfg, cluster.Options{})
 
-		outerCfg, outerNs, err := config.NamedConfigAndNamespace(dstCtx)
+		outerCfg, outerNs, err := getOuterConfig(dstCtx)
 		if err != nil {
-			log.Fatal(err)
+			klog.Fatal(err)
 		}
 		outerCluster := cluster.New(dstCtx, outerCfg, cluster.Options{})
 
 		co, err := inner.NewController(innerCluster, outerCluster, outerNs)
 		if err != nil {
-			log.Fatalf("creating dest controller: %v", err)
+			klog.Fatalf("creating dest controller: %v", err)
 		}
 
 		m.AddController(co)
 	case "outer":
 		if flag.NArg() != 2 {
-			log.Fatalf("Usage: manager outer outer-ctx|INCLUSTER")
+			klog.Fatalf("Usage: manager outer outer-ctx|INCLUSTER")
 		}
 
 		srcCtx := flag.Arg(1)
-
-		var err error
-		var cfg *rest.Config
-		outerNs := "default"
-		if srcCtx == incluster {
-			cfg, err = rest.InClusterConfig()
-		} else {
-			cfg, outerNs, err = config.NamedConfigAndNamespace(srcCtx)
-		}
-
+		cfg, outerNs, err := getInClusterConfigOrContext(srcCtx)
 		if err != nil {
-			log.Fatal(err)
+			klog.Fatal(err)
 		}
 		outerCluster := cluster.New(srcCtx, cfg, cluster.Options{})
 
 		co, err := outer.NewController(outerCluster, outerNs)
 		if err != nil {
-			log.Fatalf("creating dest controller: %v", err)
+			klog.Fatalf("creating dest controller: %v", err)
 		}
 
 		m.AddController(co)
-	case "outer-daemon":
-		if flag.NArg() != 2 {
-			log.Fatalf("Usage: manager outer outer-ctx")
+	case "publish-config":
+		if flag.NArg() != 3 {
+			klog.Fatalf("Usage: publish-config outer-ctx|OUTCLUSTER config-path")
 		}
-		log.Fatalf("TODO")
+
+		outerCtx := flag.Arg(1)
+		configPath := flag.Arg(2)
+		outerCfg, ns, err := getOuterConfig(outerCtx)
+		if err == nil {
+			err = pubconfig.PublishConfig(configPath, configSecretName, ns, outerCfg)
+		}
+		if err != nil {
+			klog.Fatal(err)
+		}
+		os.Exit(0)
 	}
 
 	if err := m.Start(signals.SetupSignalHandler()); err != nil {
-		log.Fatalf("while or after starting manager: %v", err)
+		klog.Fatalf("while or after starting manager: %v", err)
 	}
 }

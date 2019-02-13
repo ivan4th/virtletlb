@@ -33,18 +33,83 @@ spec:
       serviceAccountName: virtletlb
       containers:
       - name: virtletlb
-        args: ["-v=2", "-logtostderr", "inner", "INCLUSTER", "outer"]
-        image: docker.io/ishvedunov/virtletlb
+        args: ["-v=2", "-logtostderr", "inner", "INCLUSTER", "OUTCLUSTER"]
+        image: docker.io/ishvedunov/virtletlb:test1
         env:
-        - name: KUBECONFIG
-          value: /etc/virtletlb/clusters.conf
+        # FIXME: the inner controller should be able to handle /etc/cloud/environment
+        # Use KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT from there
+        # root@k8s-0:~# cat /etc/cloud/environment
+        # KUBERNETES_SERVICE_PORT_HTTPS=443
+        # KUBERNETES_PORT=tcp://10.96.0.1:443
+        # KUBERNETES_PORT_443_TCP=tcp://10.96.0.1:443
+        # KUBERNETES_PORT_443_TCP_PROTO=tcp
+        # KUBERNETES_PORT_443_TCP_PORT=443
+        # KUBERNETES_PORT_443_TCP_ADDR=10.96.0.1
+        # KUBERNETES_SERVICE_HOST=10.96.0.1
+        # KUBERNETES_SERVICE_PORT=443
+        - name: OUTER_KUBERNETES_SERVICE_HOST
+          value: "10.96.0.1"
+        - name: OUTER_KUBERNETES_SERVICE_PORT
+          value: "443"
         volumeMounts:
-        - mountPath: /etc/virtletlb
-          name: cluster-configs
+        - mountPath: /outer-serviceaccount
+          name: outer-sa
       volumes:
-      - name: cluster-configs
-        secret:
-          secretName: cluster-configs
+      - name: outer-sa
+        hostPath:
+          path: /var/run/secrets/kubernetes.io/serviceaccount
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: publish-config
+spec:
+  template:
+    metadata:
+      name: publish-config
+    spec:
+      restartPolicy: Never
+      # the pod must land on the master node
+      tolerations:
+      - key: "node-role.kubernetes.io/master"
+        operator: "Exists"
+        effect: "NoSchedule"
+      nodeSelector:
+        node-role.kubernetes.io/master: ""
+      containers:
+      - name: publish-config
+        args: ["-v=2", "-logtostderr", "publish-config", "OUTCLUSTER", "/etc/kubernetes/admin.conf"]
+        image: docker.io/ishvedunov/virtletlb:test1
+        # FIXME: rm this
+        imagePullPolicy: Always
+        env:
+        # FIXME: the inner controller should be able to handle /etc/cloud/environment
+        # Use KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT from there
+        # root@k8s-0:~# cat /etc/cloud/environment
+        # KUBERNETES_SERVICE_PORT_HTTPS=443
+        # KUBERNETES_PORT=tcp://10.96.0.1:443
+        # KUBERNETES_PORT_443_TCP=tcp://10.96.0.1:443
+        # KUBERNETES_PORT_443_TCP_PROTO=tcp
+        # KUBERNETES_PORT_443_TCP_PORT=443
+        # KUBERNETES_PORT_443_TCP_ADDR=10.96.0.1
+        # KUBERNETES_SERVICE_HOST=10.96.0.1
+        # KUBERNETES_SERVICE_PORT=443
+        - name: OUTER_KUBERNETES_SERVICE_HOST
+          value: "10.96.0.1"
+        - name: OUTER_KUBERNETES_SERVICE_PORT
+          value: "443"
+        volumeMounts:
+        - mountPath: /outer-serviceaccount
+          name: outer-sa
+        - mountPath: /etc/kubernetes
+          name: etc-kube
+      volumes:
+      - name: outer-sa
+        hostPath:
+          path: /var/run/secrets/kubernetes.io/serviceaccount
+      - name: etc-kube
+        hostPath:
+          path: /etc/kubernetes
 ---
 apiVersion: v1
 kind: ServiceAccount

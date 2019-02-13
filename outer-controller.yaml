@@ -34,7 +34,7 @@ spec:
       containers:
       - name: virtletlb
         args: ["-v=2", "-logtostderr", "outer", "INCLUSTER"]
-        image: docker.io/ishvedunov/virtletlb
+        image: docker.io/ishvedunov/virtletlb:test1
 ---
 apiVersion: v1
 kind: ServiceAccount

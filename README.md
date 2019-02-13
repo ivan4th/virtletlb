@@ -19,6 +19,13 @@
    that runs kubeadm-dind-cluster: `curl http://10.97.187.152`
    The first nginx example outputs the standard nginx banner
    while the second one just gives `<html><body>2nd nginx</body></html>`
+1. Enter a kubeadm node via
+   `docker exec -it kube-master /bin/bash`
+   (this is needed so as to make inner node IPs accessible)
+1. Grab the inner cluster config from secret:
+   `kubectl get secret config -o json | jq -r '.data["admin.conf"]' | base64 --decode >/tmp/admin.conf`
+1. Make sure the config works:
+   `KUBECONFIG=/tmp/admin.conf kubectl get nodes`
 
 `is.yaml` file is needed for debugging of the controllers w/o actually
 using MetalLB.  It's not used during normal operation.
