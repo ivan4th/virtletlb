@@ -45,7 +45,7 @@ func PublishConfig(configPath, secretName, namespace string, outerCfg *rest.Conf
 	}
 
 	if err = clientSet.CoreV1().Secrets(namespace).Delete(secretName, nil); err != nil && !apierrs.IsNotFound(err) {
-		return fmt.Errorf("error deleting secret %q in ns %q: %v", secretName, namespace)
+		return fmt.Errorf("error deleting secret %q in ns %q: %v", secretName, namespace, err)
 	}
 
 	_, err = clientSet.CoreV1().Secrets(namespace).Create(&v1.Secret{
